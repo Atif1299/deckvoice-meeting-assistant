@@ -6,6 +6,7 @@ import logging
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from app.config import get_settings
+from app.domain.metering import on_status_change
 from app.domain.session_store import store
 
 logger = logging.getLogger("deckvoice.v2.webhooks")
@@ -52,7 +53,10 @@ async def bot_status(
     if nested and not bot_id:
         bot_id = str(nested.get("bot_id") or nested.get("id") or "")
     if bot_id and code:
-        store.update_bot_status(bot_id, code, message)
+        result = store.update_bot_status(bot_id, code, message)
+        if result:
+            session_id, new_state = result
+            on_status_change(session_id, new_state)
     return {"status": "ok"}
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -9,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import CLOUD_RUN_CORS_ORIGIN_REGEX, cors_origin_list, get_settings
 from app.db import SessionLocal, create_tables
 from app.domain import agents as agent_store
+from app.domain.metering import watchdog_loop
 from app.http import agents, auth_routes, billing, customers, me, presentations, sessions, webhooks
 from app.http.auth import require_admin_key
 from app.realtime import relay
@@ -26,8 +28,19 @@ async def lifespan(_app: FastAPI):
         agent_store.ensure_default_agent(db)
     finally:
         db.close()
+    settings = get_settings()
+    watchdog = asyncio.create_task(
+        watchdog_loop(settings.session_cleanup_interval_seconds)
+    )
     logger.info("DeckVoice API ready")
-    yield
+    try:
+        yield
+    finally:
+        watchdog.cancel()
+        try:
+            await watchdog
+        except asyncio.CancelledError:
+            pass
 
 
 def create_app() -> FastAPI:

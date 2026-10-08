@@ -10,8 +10,15 @@ from app.config import get_settings
 from app.db import get_db
 from app.db.models import SessionState
 from app.domain import agents as agent_store
+from app.domain.metering import close_billing_window
+from app.domain.plans import limits_for_plan
 from app.domain.session_store import LiveSession, store
-from app.domain.usage import check_quota, increment_usage
+from app.domain.usage import (
+    METRIC_LAUNCHES,
+    check_launch_quota,
+    get_active_plan,
+    increment_usage,
+)
 from app.http.auth import WorkspaceContext, assert_session_access, get_workspace_context
 from app.meetings.recall import RecallClient
 from app.storage import PresentationStore
@@ -35,6 +42,7 @@ class LaunchOut(BaseModel):
     agent_name: str
     agent_version: int | None = None
     state: str
+    max_session_minutes: int
     message: str = "Bot launched"
 
 
@@ -65,7 +73,7 @@ async def launch_session(
         raise HTTPException(status_code=400, detail="RECALL_API_KEY not configured")
 
     if not ctx.is_operator:
-        check_quota(db, ctx.workspace_id, "launches")
+        check_launch_quota(db, ctx.workspace_id)
 
     meta = PresentationStore(db).get(body.presentation_id)
     if not meta:
@@ -83,6 +91,9 @@ async def launch_session(
     bot_id = str(uuid.uuid4())
     tenant_id = None if ctx.is_operator else ctx.workspace_id
 
+    plan = "operator" if ctx.is_operator else get_active_plan(db, ctx.workspace_id)
+    limits = limits_for_plan(plan)
+
     recall = RecallClient()
     output_url = recall.build_output_media_url(session_id=session_id, presentation_id=body.presentation_id)
     wss = settings.backend_url.replace("https://", "wss://").replace("http://", "ws://").rstrip("/")
@@ -94,6 +105,7 @@ async def launch_session(
         meeting_url=body.meeting_url,
         bot_name=body.bot_name,
         output_media_page_url=output_url,
+        max_session_minutes=limits.max_session_minutes,
         chat_webhook_url=chat_url,
         status_webhook_url=status_url,
     )
@@ -119,7 +131,7 @@ async def launch_session(
     store.create(sess)
 
     if not ctx.is_operator:
-        increment_usage(db, ctx.workspace_id, "launches")
+        increment_usage(db, ctx.workspace_id, METRIC_LAUNCHES)
 
     return LaunchOut(
         session_id=session_id,
@@ -130,6 +142,7 @@ async def launch_session(
         agent_name=body.agent_name,
         agent_version=active.version if active else 1,
         state=sess.state,
+        max_session_minutes=limits.max_session_minutes,
     )
 
 
@@ -171,5 +184,6 @@ async def leave_session(
     assert_session_access(ctx, sess.customer_id)
     if sess.recall_bot_id:
         await RecallClient().leave_call(sess.recall_bot_id)
+    minutes = close_billing_window(session_id)
     store.update(session_id, state=SessionState.CALL_ENDED.value)
-    return {"ok": True}
+    return {"ok": True, "billed_minutes": minutes}

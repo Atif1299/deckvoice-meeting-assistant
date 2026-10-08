@@ -34,18 +34,43 @@ class RecallClient:
         )
         return f"{base}/?{qs}"
 
+    def build_automatic_leave(self, *, max_session_minutes: int) -> dict[str, Any]:
+        """Cost ceiling enforced by Recall itself.
+
+        ``in_call_recording_timeout`` is the hard stop: the bot leaves at the
+        plan's per-session cap even if our watchdog process is down. The other
+        timeouts stop us paying for bots parked in waiting rooms, empty calls,
+        or silent meetings nobody is attending.
+        """
+        s = self.settings
+        return {
+            "waiting_room_timeout": s.recall_waiting_room_timeout_s,
+            "noone_joined_timeout": s.recall_noone_joined_timeout_s,
+            "everyone_left_timeout": s.recall_everyone_left_timeout_s,
+            "in_call_not_recording_timeout": s.recall_in_call_not_recording_timeout_s,
+            "in_call_recording_timeout": max(60, int(max_session_minutes) * 60),
+            "silence_detection": {
+                "timeout": s.recall_silence_timeout_s,
+                "activate_after": s.recall_silence_activate_after_s,
+            },
+        }
+
     def build_create_bot_payload(
         self,
         *,
         meeting_url: str,
         bot_name: str,
         output_media_page_url: str,
+        max_session_minutes: int,
         chat_webhook_url: str | None = None,
         status_webhook_url: str | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "meeting_url": meeting_url,
             "bot_name": bot_name,
+            "automatic_leave": self.build_automatic_leave(
+                max_session_minutes=max_session_minutes
+            ),
             "output_media": {
                 "camera": {"kind": "webpage", "config": {"url": output_media_page_url}}
             },

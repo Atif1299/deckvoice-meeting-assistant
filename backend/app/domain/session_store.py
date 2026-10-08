@@ -17,6 +17,9 @@ DURABLE_KEYS = (
     "current_page",
     "first_audio_latency_ms",
     "latency_breakdown",
+    "billing_started_at",
+    "billed_minutes",
+    "billing_closed",
 )
 
 
@@ -153,10 +156,13 @@ class SessionStore:
         self._persist_redis(sess)
         return sess
 
-    def update_bot_status(self, recall_bot_id: str, code: str, message: str = "") -> None:
+    def update_bot_status(
+        self, recall_bot_id: str, code: str, message: str = ""
+    ) -> tuple[str, str] | None:
+        """Apply a Recall status change. Returns (session_id, new_state)."""
         sess = self.get_by_recall_bot_id(recall_bot_id)
         if not sess:
-            return
+            return None
         mapping = {
             "joining_call": SessionState.JOINING.value,
             "in_waiting_room": SessionState.IN_WAITING_ROOM.value,
@@ -166,12 +172,14 @@ class SessionStore:
             "done": SessionState.DONE.value,
             "fatal": SessionState.FATAL.value,
         }
+        new_state = mapping.get(code, sess.state)
         self.update(
             sess.session_id,
-            state=mapping.get(code, sess.state),
+            state=new_state,
             last_status_code=code,
             last_status_message=message,
         )
+        return sess.session_id, new_state
 
     def _persist_sql(self, sess: LiveSession) -> None:
         db = SessionLocal()
