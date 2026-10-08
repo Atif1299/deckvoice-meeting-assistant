@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db import get_db
 from app.http.auth import WorkspaceContext, assert_presentation_access, get_workspace_context
-from app.domain.usage import check_quota, increment_usage
+from app.domain.usage import METRIC_UPLOADS, check_upload_quota, increment_usage
 from app.indexing.pipeline import run_index_job
 from app.security.presenter_token import verify_presenter_token
 from app.storage import PresentationStore
@@ -50,7 +50,7 @@ async def upload_presentation(
 ):
     settings = get_settings()
     if not ctx.is_operator:
-        check_quota(db, ctx.workspace_id, "uploads")
+        check_upload_quota(db, ctx.workspace_id)
 
     data = await file.read()
     if len(data) > settings.max_upload_bytes:
@@ -64,7 +64,7 @@ async def upload_presentation(
     background.add_task(run_index_job, pid)
 
     if not ctx.is_operator:
-        increment_usage(db, ctx.workspace_id, "uploads")
+        increment_usage(db, ctx.workspace_id, METRIC_UPLOADS)
 
     return PresentationOut(**meta.to_dict())
 
