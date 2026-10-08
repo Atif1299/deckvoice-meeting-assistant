@@ -17,7 +17,17 @@ from app.http.paddle_ips import ip_in_cidrs, source_ip_from_request
 
 STARTER_PRICE = "pri_01m2v77c4sfdjmp2xk4wbp7apb"
 PRO_PRICE = "pri_01m2v74zwdp5egjscr89dk906c"
+TEAM_PRICE = "pri_team_99"
+BUSINESS_PRICE = "pri_business_399"
 SECRET = "pdl_test_webhook_secret"
+
+# Current catalogue plus the grandfathered ids that must still resolve.
+PRICE_MAP = {
+    BUSINESS_PRICE: "business",
+    TEAM_PRICE: "team",
+    PRO_PRICE: "pro",
+    STARTER_PRICE: "starter",
+}
 
 
 def _sign(raw_body: str, secret: str = SECRET, ts: str = "1717000000") -> str:
@@ -45,16 +55,14 @@ def test_plan_from_custom_data():
     assert (
         plan_from_paddle_payload(
             {"custom_data": {"plan": "starter"}, "items": []},
-            starter_price=STARTER_PRICE,
-            pro_price=PRO_PRICE,
+            price_map=PRICE_MAP,
         )
         == "starter"
     )
     assert (
         plan_from_paddle_payload(
             {"custom_data": {"plan": "pro"}},
-            starter_price=STARTER_PRICE,
-            pro_price=PRO_PRICE,
+            price_map=PRICE_MAP,
         )
         == "pro"
     )
@@ -64,12 +72,35 @@ def test_plan_prefers_price_id_over_conflicting_custom_data():
     assert (
         plan_from_paddle_payload(
             {
-                "custom_data": {"plan": "starter"},
-                "items": [{"price": {"id": PRO_PRICE}}],
+                "custom_data": {"plan": "team"},
+                "items": [{"price": {"id": BUSINESS_PRICE}}],
             },
-            starter_price=STARTER_PRICE,
-            pro_price=PRO_PRICE,
+            price_map=PRICE_MAP,
         )
+        == "business"
+    )
+
+
+def test_plan_resolves_current_catalogue_prices():
+    team = plan_from_paddle_payload(
+        {"items": [{"price": {"id": TEAM_PRICE}}]}, price_map=PRICE_MAP
+    )
+    business = plan_from_paddle_payload(
+        {"items": [{"price_id": BUSINESS_PRICE, "quantity": 1}]}, price_map=PRICE_MAP
+    )
+    assert team == "team"
+    assert business == "business"
+
+
+def test_legacy_prices_still_resolve_for_grandfathered_subscribers():
+    assert (
+        plan_from_paddle_payload(
+            {"items": [{"price": {"id": STARTER_PRICE}}]}, price_map=PRICE_MAP
+        )
+        == "starter"
+    )
+    assert (
+        plan_from_paddle_payload({"items": [{"price": {"id": PRO_PRICE}}]}, price_map=PRICE_MAP)
         == "pro"
     )
 
@@ -77,18 +108,15 @@ def test_plan_prefers_price_id_over_conflicting_custom_data():
 def test_plan_from_price_id_when_custom_data_missing():
     starter = plan_from_paddle_payload(
         {"items": [{"price": {"id": STARTER_PRICE}}]},
-        starter_price=STARTER_PRICE,
-        pro_price=PRO_PRICE,
+        price_map=PRICE_MAP,
     )
     pro = plan_from_paddle_payload(
         {"items": [{"price_id": PRO_PRICE, "quantity": 1}]},
-        starter_price=STARTER_PRICE,
-        pro_price=PRO_PRICE,
+        price_map=PRICE_MAP,
     )
     unknown = plan_from_paddle_payload(
         {"items": [{"price": {"id": "pri_other"}}]},
-        starter_price=STARTER_PRICE,
-        pro_price=PRO_PRICE,
+        price_map=PRICE_MAP,
     )
     assert starter == "starter"
     assert pro == "pro"
