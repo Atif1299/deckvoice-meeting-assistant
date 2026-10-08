@@ -12,14 +12,18 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db import get_db
 from app.db.models import Subscription
+from app.domain.plans import SELF_SERVE_PLANS, limits_for_plan
 from app.domain.usage import usage_snapshot
 from app.http.auth import WorkspaceContext, get_workspace_context
 
 router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
 
+# Plan names a webhook payload is allowed to assert via custom_data.
+PLAN_NAMES = ("team", "business", "starter", "pro", "free")
+
 
 class CheckoutIn(BaseModel):
-    plan: str  # starter | pro
+    plan: str  # team | business
 
 
 class CheckoutOut(BaseModel):
@@ -39,9 +43,13 @@ class PortalOut(BaseModel):
 
 class UsageOut(BaseModel):
     plan: str
+    plan_label: str
     period_month: str
-    launches: dict
+    meeting_minutes: dict
     uploads: dict
+    launches: dict
+    concurrency: dict
+    max_session_minutes: int
 
 
 def paddle_environment(api_base: str) -> str:
@@ -54,17 +62,34 @@ def _paddle_configured() -> None:
         raise HTTPException(status_code=503, detail="Paddle not configured")
 
 
+def paddle_price_map() -> dict[str, str]:
+    """Paddle price id -> plan name, newest catalogue first.
+
+    Legacy starter/pro ids stay mapped so existing subscriptions keep resolving
+    to a plan on inbound webhooks, even though they are no longer purchasable.
+    """
+    settings = get_settings()
+    pairs = (
+        (settings.paddle_price_business, "business"),
+        (settings.paddle_price_team, "team"),
+        (settings.paddle_price_pro, "pro"),
+        (settings.paddle_price_starter, "starter"),
+    )
+    return {price_id: plan for price_id, plan in pairs if price_id}
+
+
 def _price_for_plan(plan: str) -> str:
     settings = get_settings()
-    if plan == "starter":
-        if not settings.paddle_price_starter:
-            raise HTTPException(status_code=503, detail="Paddle starter price not configured")
-        return settings.paddle_price_starter
-    if plan == "pro":
-        if not settings.paddle_price_pro:
-            raise HTTPException(status_code=503, detail="Paddle pro price not configured")
-        return settings.paddle_price_pro
-    raise HTTPException(status_code=400, detail="Invalid plan")
+    configured = {
+        "team": settings.paddle_price_team,
+        "business": settings.paddle_price_business,
+    }
+    if plan not in SELF_SERVE_PLANS:
+        raise HTTPException(status_code=400, detail="Invalid plan")
+    price_id = configured.get(plan) or ""
+    if not price_id:
+        raise HTTPException(status_code=503, detail=f"Paddle {plan} price not configured")
+    return price_id
 
 
 def _paddle_headers() -> dict[str, str]:
@@ -150,16 +175,15 @@ def _price_ids_from_items(items: list) -> list[str]:
     return ids
 
 
-def plan_from_paddle_payload(data: dict, *, starter_price: str, pro_price: str) -> str:
+def plan_from_paddle_payload(data: dict, *, price_map: dict[str, str]) -> str:
     for price_id in _price_ids_from_items(data.get("items") or []):
-        if pro_price and price_id == pro_price:
-            return "pro"
-        if starter_price and price_id == starter_price:
-            return "starter"
+        plan = price_map.get(price_id)
+        if plan:
+            return plan
     custom = data.get("custom_data") or {}
     if isinstance(custom, dict):
         plan = custom.get("plan")
-        if plan in ("starter", "pro", "free"):
+        if plan in PLAN_NAMES:
             return plan
     return "free"
 
@@ -206,11 +230,22 @@ def billing_usage(
     db: Session = Depends(get_db),
 ):
     if ctx.is_operator:
+        operator = limits_for_plan("operator")
         return UsageOut(
             plan="operator",
+            plan_label=operator.label,
             period_month=datetime.now(timezone.utc).strftime("%Y-%m"),
-            launches={"used": 0, "limit": 9999},
-            uploads={"used": 0, "limit": 9999},
+            meeting_minutes={
+                "used": 0,
+                "limit": operator.meeting_minutes,
+                "overage": 0,
+                "overage_usd": 0.0,
+                "overage_allowed": False,
+            },
+            uploads={"used": 0, "limit": operator.uploads},
+            launches={"used": 0},
+            concurrency={"active": 0, "limit": operator.concurrent_sessions},
+            max_session_minutes=operator.max_session_minutes,
         )
     snap = usage_snapshot(db, ctx.workspace_id)
     return UsageOut(**snap)
@@ -224,13 +259,13 @@ def create_checkout(
 ):
     if ctx.is_operator:
         raise HTTPException(status_code=400, detail="Operator accounts do not need billing")
-    if body.plan not in ("starter", "pro"):
+    if body.plan not in SELF_SERVE_PLANS:
         raise HTTPException(status_code=400, detail="Invalid plan")
     sub = _get_or_create_subscription(db, ctx.workspace_id)
     current = (sub.plan or "free").lower()
     if current == body.plan:
         raise HTTPException(status_code=400, detail=f"Already on {body.plan}")
-    if current == "pro" and body.plan == "starter":
+    if limits_for_plan(current).price_usd > limits_for_plan(body.plan).price_usd:
         raise HTTPException(status_code=400, detail="Use Manage subscription to change plan")
     price_id = _price_for_plan(body.plan)
     payload: dict = {
@@ -301,18 +336,13 @@ def handle_paddle_webhook(db: Session, event: dict) -> None:
     data = event.get("data") or {}
     if not isinstance(data, dict):
         return
-    settings = get_settings()
 
     if event_type == "transaction.completed":
         workspace_id = _workspace_id_from_data(db, data)
         if not workspace_id:
             return
         sub = _get_or_create_subscription(db, workspace_id)
-        sub.plan = plan_from_paddle_payload(
-            data,
-            starter_price=settings.paddle_price_starter,
-            pro_price=settings.paddle_price_pro,
-        )
+        sub.plan = plan_from_paddle_payload(data, price_map=paddle_price_map())
         sub.status = "active"
         if data.get("customer_id"):
             sub.paddle_customer_id = data["customer_id"]
@@ -339,11 +369,7 @@ def handle_paddle_webhook(db: Session, event: dict) -> None:
             sub.status = "canceled"
             sub.paddle_subscription_id = None
         else:
-            sub.plan = plan_from_paddle_payload(
-                data,
-                starter_price=settings.paddle_price_starter,
-                pro_price=settings.paddle_price_pro,
-            )
+            sub.plan = plan_from_paddle_payload(data, price_map=paddle_price_map())
             sub.status = status
             if data.get("id"):
                 sub.paddle_subscription_id = data["id"]

@@ -13,6 +13,14 @@ class Settings(BaseSettings):
     recall_api_base_url: str = "https://us-west-2.recall.ai/api/v1"
     recall_webhook_secret: str = ""
     recall_skip_webhook_verify: bool = False
+    # automatic_leave guards: the bot leaves on its own so an abandoned meeting
+    # cannot bill indefinitely if our watchdog is down. Seconds.
+    recall_waiting_room_timeout_s: int = 600
+    recall_noone_joined_timeout_s: int = 300
+    recall_everyone_left_timeout_s: int = 30
+    recall_in_call_not_recording_timeout_s: int = 600
+    recall_silence_timeout_s: int = 600
+    recall_silence_activate_after_s: int = 120
 
     backend_url: str = "http://127.0.0.1:8001"
     frontend_url: str = "http://127.0.0.1:5175"
@@ -80,10 +88,17 @@ class Settings(BaseSettings):
     # Paddle billing
     paddle_api_key: str = ""
     paddle_webhook_secret: str = ""
+    # Current catalogue.
+    paddle_price_team: str = ""
+    paddle_price_business: str = ""
+    # Grandfathered $10/$20 prices — still mapped on inbound webhooks so
+    # existing subscribers keep working, but no longer sold.
     paddle_price_starter: str = ""
     paddle_price_pro: str = ""
     paddle_client_token: str = ""
-    paddle_api_base: str = "https://sandbox-api.paddle.com"
+    # Default to live: a deploy that forgets this var must not silently run
+    # billing against the sandbox. Set the sandbox URL explicitly in local .env.
+    paddle_api_base: str = "https://api.paddle.com"
 
     marketing_url: str = "http://127.0.0.1:5177"
     dashboard_url: str = "http://127.0.0.1:5176"
