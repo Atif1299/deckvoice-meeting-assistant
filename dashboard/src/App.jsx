@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Navigate, Route, Routes, NavLink, useLocation } from "react-router-dom";
 import OverviewPage from "./pages/OverviewPage.jsx";
 import UploadPage from "./pages/UploadPage.jsx";
@@ -14,6 +15,14 @@ import BillingPage from "./pages/BillingPage.jsx";
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
 import DeckVoiceMark from "./components/DeckVoiceMark.jsx";
 import { useAuth } from "./context/AuthContext.jsx";
+import { trackPageView } from "./lib/analytics.js";
+
+function usePageViews() {
+  const location = useLocation();
+  useEffect(() => {
+    trackPageView(location.pathname);
+  }, [location.pathname]);
+}
 
 const navItems = [
   { to: "/app", label: "Overview", caption: "System health", end: true, glyph: "◉" },
@@ -87,6 +96,7 @@ function DashboardShell() {
 
 export default function App() {
   const location = useLocation();
+  usePageViews();
   const isAdminPage = location.pathname === "/admin";
 
   if (isAdminPage) {

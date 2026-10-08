@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { supabase, supabaseConfigured } from "../lib/supabase.js";
 import { clearActivity, isAuthSessionExpired, markActivity } from "../lib/sessionExpiry.js";
 import { apiGet, apiPost, setAuthTokenProvider } from "../utils/api.js";
+import { identify, resetAnalytics } from "../lib/analytics.js";
 
 const AuthContext = createContext(null);
 
@@ -103,7 +104,10 @@ export function AuthProvider({ children }) {
       try {
         await apiPost("/api/v1/auth/bootstrap", {});
         const me = await apiGet("/api/v1/me");
-        if (!cancelled) setProfile(me);
+        if (!cancelled) {
+          setProfile(me);
+          identify(me);
+        }
       } catch (error) {
         if (error?.status === 401) {
           await expireSession();
@@ -131,6 +135,7 @@ export function AuthProvider({ children }) {
       supabaseConfigured,
       refreshProfile,
       signOut: async () => {
+        resetAnalytics();
         await expireSession();
       },
     }),

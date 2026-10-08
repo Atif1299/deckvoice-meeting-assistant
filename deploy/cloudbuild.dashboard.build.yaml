@@ -3,6 +3,8 @@ substitutions:
   _IMAGE_NAME: deckvoice-v2-dashboard
   _AR_REPOSITORY: overtone
   _VITE_API_BASE: https://deckvoice-v2-api-4idrhaffca-uc.a.run.app
+  _VITE_POSTHOG_KEY: ""
+  _VITE_POSTHOG_HOST: https://us.i.posthog.com
 
 steps:
   - name: gcr.io/cloud-builders/docker
@@ -12,6 +14,10 @@ steps:
       - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPOSITORY}/${_IMAGE_NAME}:latest
       - --build-arg
       - VITE_API_BASE=${_VITE_API_BASE}
+      - --build-arg
+      - VITE_POSTHOG_KEY=${_VITE_POSTHOG_KEY}
+      - --build-arg
+      - VITE_POSTHOG_HOST=${_VITE_POSTHOG_HOST}
       - .
 images:
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPOSITORY}/${_IMAGE_NAME}:latest

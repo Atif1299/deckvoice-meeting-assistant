@@ -5,7 +5,11 @@ import "@fontsource/geist-sans/400.css";
 import "@fontsource/geist-sans/600.css";
 import "@fontsource/geist-sans/700.css";
 import App from "./App.jsx";
+import { captureAttribution, initAnalytics } from "./lib/analytics.js";
 import "./index.css";
+
+initAnalytics();
+captureAttribution();
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
