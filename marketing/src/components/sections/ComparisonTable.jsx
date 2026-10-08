@@ -1,6 +1,6 @@
 import { useScrollReveal } from "../../hooks/useScrollReveal.js";
 
-export default function ComparisonTable({ rows, plans = ["Free", "Starter", "Pro"] }) {
+export default function ComparisonTable({ rows, plans = ["Free", "Team", "Business"] }) {
   const ref = useScrollReveal();
 
   return (

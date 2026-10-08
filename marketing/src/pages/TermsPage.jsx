@@ -24,7 +24,7 @@ export default function TermsPage() {
         <p>
           DeckVoice is a software-as-a-service product: an AI meeting presentation agent that indexes presentation
           files, joins video meetings via third-party bots, and answers audience questions using indexed content.
-          Plans include Free, Starter, and Pro, with monthly limits on bot launches and deck uploads as shown on
+          Plans include Free, Team, and Business, with monthly limits on meeting-minutes and deck uploads as shown on
           the <Link to="/pricing">Pricing</Link> page.
         </p>
       </section>

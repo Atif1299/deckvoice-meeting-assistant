@@ -43,7 +43,7 @@ export default function RefundPage() {
       <section className="legal-section">
         <h2>What we refund</h2>
         <ul>
-          <li>Unused paid Starter or Pro subscription charges requested within 14 days.</li>
+          <li>Unused paid Team or Business subscription charges requested within 14 days.</li>
           <li>Duplicate or accidental charges.</li>
           <li>Service failure where DeckVoice could not be used after a good-faith attempt.</li>
         </ul>

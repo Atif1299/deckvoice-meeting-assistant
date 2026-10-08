@@ -14,7 +14,7 @@ const homeFaq = [
   { q: "Does DeckVoice replace a human presenter entirely?", a: "DeckVoice handles scripted presentation flow and grounded Q&A from your deck. Many teams use it for first-pass demos, onboarding, and investor updates — with humans joining for negotiation or custom deep dives." },
   { q: "Which meeting platforms are supported?", a: "Google Meet, Zoom, and Microsoft Teams via Recall.ai bots. Paste the meeting URL in Launch and DeckVoice joins as the presenter camera." },
   { q: "How are answers kept on-deck?", a: "Every slide is indexed into pgvector. The voice agent uses search_and_answer and slide tools — responses come from uploaded content, not open-web knowledge." },
-  { q: "What's included in the free trial?", a: "1 deck upload and 5 bot launches per month. Full presenter experience, agent studio, and community support. No credit card on signup." },
+  { q: "What's included in the free plan?", a: "30 meeting-minutes and 2 deck uploads per month. Full presenter experience, agent studio, and community support. No credit card on signup." },
 ];
 
 export default function HomePage() {
@@ -103,7 +103,7 @@ export default function HomePage() {
 
       <CTABand
         title="Ready to present without a human in the loop?"
-        subtitle="Start free — 1 deck upload and 5 bot launches included. Upgrade when your demo volume grows."
+        subtitle="Start free — 30 meeting-minutes and 2 deck uploads included. Pay for the meeting time you use."
         primaryLabel="Start free trial"
         primaryHref={`${dashboardUrl}/signup`}
         secondaryLabel="See pricing"
