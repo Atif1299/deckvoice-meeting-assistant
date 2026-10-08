@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext.jsx";
 import { apiGet, apiPost } from "../utils/api.js";
+import { EVENTS, track } from "../lib/analytics.js";
 
 const PADDLE_JS = "https://cdn.paddle.com/paddle/v2/paddle.js";
 
@@ -58,16 +59,44 @@ function openCheckout(transactionId) {
   window.Paddle.Checkout.open({ transactionId });
 }
 
-function UsageBar({ label, used, limit }) {
+const PLAN_COPY = {
+  free: "Free includes 30 meeting-minutes and 2 deck uploads each month. No card required.",
+  team: "Team includes 10 meeting-hours, 25 uploads, and 3 concurrent meetings. Extra time bills at $12/hour.",
+  business: "Business includes 50 meeting-hours, 200 uploads, and 10 concurrent meetings. Extra time bills at $10/hour.",
+  starter: "Starter is a legacy plan (120 meeting-minutes). Move to Team for more time and concurrency.",
+  pro: "Pro is a legacy plan (300 meeting-minutes). Move to Team or Business for more time and concurrency.",
+};
+
+const UPGRADE_OPTIONS = [
+  { plan: "team", label: "Upgrade to Team — $99/mo", variant: "button-primary" },
+  { plan: "business", label: "Upgrade to Business — $399/mo", variant: "button-secondary" },
+];
+
+// Plans that can still reach the Paddle customer portal.
+const PAID_PLANS = ["team", "business", "starter", "pro"];
+
+function formatHours(minutes) {
+  if (minutes < 60) return `${minutes} min`;
+  const hours = minutes / 60;
+  return `${Number.isInteger(hours) ? hours : hours.toFixed(1)} hr`;
+}
+
+function UsageBar({ label, used, limit, format = (v) => v, tone }) {
   const pct = limit ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+  const over = limit ? used > limit : false;
   return (
     <div className="usage-bar-block">
       <div className="usage-bar-head">
         <span>{label}</span>
-        <span>{used} / {limit}</span>
+        <span>
+          {format(used)} / {format(limit)}
+        </span>
       </div>
       <div className="usage-bar-track">
-        <div className="usage-bar-fill" style={{ width: `${pct}%` }} />
+        <div
+          className={`usage-bar-fill${over || tone === "warn" ? " is-over" : ""}`}
+          style={{ width: `${pct}%` }}
+        />
       </div>
     </div>
   );
@@ -91,6 +120,7 @@ export default function BillingPage() {
   useEffect(() => {
     paddleEventHandler = (event) => {
       if (event?.name === "checkout.completed") {
+        track(EVENTS.CHECKOUT_COMPLETED, {});
         setMessage("Subscription updated — thank you!");
         load();
         setBusy("");
@@ -131,6 +161,7 @@ export default function BillingPage() {
   async function checkout(plan) {
     setBusy(plan);
     setMessage("");
+    track(EVENTS.UPGRADE_CLICKED, { plan });
     try {
       const config = await apiGet("/api/v1/billing/paddle-config");
       await ensurePaddle(config);
@@ -148,6 +179,7 @@ export default function BillingPage() {
 
   async function portal() {
     setBusy("portal");
+    track(EVENTS.PORTAL_OPENED, {});
     try {
       const { url } = await apiPost("/api/v1/billing/portal", {});
       window.location.href = url;
@@ -159,43 +191,63 @@ export default function BillingPage() {
   }
 
   const plan = usage?.plan || profile?.plan || "free";
-  const showStarter = plan === "free";
-  const showPro = plan === "free" || plan === "starter";
-  const showPortal = plan === "starter" || plan === "pro";
+  const minutes = usage?.meeting_minutes;
+  const concurrency = usage?.concurrency;
+  const overage = minutes?.overage || 0;
+  const upgrades = UPGRADE_OPTIONS.filter((option) => option.plan !== plan);
+  const showPortal = PAID_PLANS.includes(plan);
 
   return (
     <section className="page-section">
       <p className="eyebrow">Billing</p>
       <h1>Plan &amp; usage</h1>
-      <p className="lede">Current plan: <strong className="plan-pill">{plan}</strong></p>
-      {plan === "free" ? (
-        <p className="helper-text">Free trial includes 1 deck upload and 5 bot launches each month. No card required.</p>
-      ) : null}
-      {plan === "starter" ? (
-        <p className="helper-text">Starter includes 3 deck uploads and 5 bot launches each month.</p>
-      ) : null}
-      {plan === "pro" ? (
-        <p className="helper-text">Pro includes 10 deck uploads and 20 bot launches each month.</p>
-      ) : null}
+      <p className="lede">
+        Current plan: <strong className="plan-pill">{usage?.plan_label || plan}</strong>
+      </p>
+      {PLAN_COPY[plan] ? <p className="helper-text">{PLAN_COPY[plan]}</p> : null}
 
       {usage ? (
         <div className="card billing-card">
-          <UsageBar label="Bot launches this month" used={usage.launches.used} limit={usage.launches.limit} />
-          <UsageBar label="Deck uploads this month" used={usage.uploads.used} limit={usage.uploads.limit} />
+          <UsageBar
+            label="Meeting time this month"
+            used={minutes?.used ?? 0}
+            limit={minutes?.limit ?? 0}
+            format={formatHours}
+          />
+          <UsageBar
+            label="Deck uploads this month"
+            used={usage.uploads.used}
+            limit={usage.uploads.limit}
+          />
+          {concurrency ? (
+            <p className="helper-text">
+              {concurrency.active} of {concurrency.limit} concurrent meeting
+              {concurrency.limit === 1 ? "" : "s"} in use · each bot leaves automatically after{" "}
+              {usage.max_session_minutes} minutes.
+            </p>
+          ) : null}
+          {overage > 0 ? (
+            <p className="banner-note">
+              {minutes.overage_allowed
+                ? `${formatHours(overage)} over your allowance — $${minutes.overage_usd.toFixed(2)} in overage this period.`
+                : `You are ${formatHours(overage)} over your allowance. Upgrade to launch again.`}
+            </p>
+          ) : null}
         </div>
       ) : null}
 
       <div className="billing-actions">
-        {showStarter ? (
-          <button type="button" className="button button-primary" disabled={!!busy} onClick={() => checkout("starter")}>
-            {busy === "starter" ? "Opening checkout…" : "Upgrade to Starter — $10/mo"}
+        {upgrades.map((option) => (
+          <button
+            key={option.plan}
+            type="button"
+            className={`button ${option.variant}`}
+            disabled={!!busy}
+            onClick={() => checkout(option.plan)}
+          >
+            {busy === option.plan ? "Opening checkout…" : option.label}
           </button>
-        ) : null}
-        {showPro ? (
-          <button type="button" className="button button-secondary" disabled={!!busy} onClick={() => checkout("pro")}>
-            {busy === "pro" ? "Opening checkout…" : "Upgrade to Pro — $20/mo"}
-          </button>
-        ) : null}
+        ))}
         {showPortal ? (
           <button type="button" className="button button-ghost" disabled={!!busy} onClick={portal}>
             Manage subscription

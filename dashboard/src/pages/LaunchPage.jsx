@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import BotConfigForm from "../components/BotConfigForm.jsx";
 import { apiGet, apiPost } from "../utils/api.js";
+import { EVENTS, track } from "../lib/analytics.js";
 
 export default function LaunchPage() {
   const nav = useNavigate();
@@ -59,6 +60,7 @@ export default function LaunchPage() {
   async function launch() {
     setErr("");
     setLoading(true);
+    track(EVENTS.LAUNCH_ATTEMPTED, { agent_name: cfg.agent_name || "default" });
     try {
       const r = await apiPost("/api/v1/sessions/launch", {
         meeting_url: cfg.meeting_url,
@@ -67,9 +69,22 @@ export default function LaunchPage() {
         agent_name: cfg.agent_name || "default",
       });
       setResult(r);
+      track(EVENTS.LAUNCH_SUCCEEDED, {
+        session_id: r.session_id,
+        max_session_minutes: r.max_session_minutes,
+      });
       sessionStorage.setItem("deckvoice_session_id", r.session_id);
       sessionStorage.setItem("deckvoice_presentation_id", r.presentation_id);
     } catch (e) {
+      // 402 = out of meeting-minutes, 409 = concurrency cap. Both are upgrade
+      // signals and the most important events in the funnel.
+      if (e?.status === 402 || e?.status === 409) {
+        track(EVENTS.LAUNCH_BLOCKED_BY_QUOTA, {
+          status: e.status,
+          metric: e?.body?.detail?.metric,
+          plan: e?.body?.detail?.plan,
+        });
+      }
       setErr(String(e.message || e));
     } finally {
       setLoading(false);
@@ -123,6 +138,10 @@ export default function LaunchPage() {
             <div>
               <dt>State</dt>
               <dd>{result.state}</dd>
+            </div>
+            <div>
+              <dt>Auto-leave after</dt>
+              <dd>{result.max_session_minutes} min</dd>
             </div>
           </dl>
           <details>

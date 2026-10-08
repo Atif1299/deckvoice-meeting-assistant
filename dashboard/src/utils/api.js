@@ -104,14 +104,14 @@ async function buildHeaders(headers = {}) {
 
 async function parseError(response) {
   const text = await response.text();
-  if (!text) return `Request failed (${response.status})`;
+  if (!text) return { message: `Request failed (${response.status})`, body: null };
   try {
     const data = JSON.parse(text);
-    if (typeof data?.detail === "string") return data.detail;
-    if (data?.detail?.message) return data.detail.message;
-    return text;
+    if (typeof data?.detail === "string") return { message: data.detail, body: data };
+    if (data?.detail?.message) return { message: data.detail.message, body: data };
+    return { message: text, body: data };
   } catch {
-    return text;
+    return { message: text, body: null };
   }
 }
 
@@ -126,8 +126,12 @@ async function request(path, init = {}, timeoutMs = API_TIMEOUT_MS) {
       signal: controller?.signal,
     });
     if (!response.ok) {
-      const err = new Error(await parseError(response));
+      // Structured quota errors (402/409) carry detail.metric and detail.plan;
+      // keep the parsed body on the error so callers can react to the reason.
+      const { message, body } = await parseError(response);
+      const err = new Error(message || "Request failed");
       err.status = response.status;
+      err.body = body;
       if (response.status === 401 && typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("deckvoice:unauthorized"));
       }
